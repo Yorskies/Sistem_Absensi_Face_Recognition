@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <!-- Main Content -->
+        <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+            <h1 class="h2">Dashboard</h1>
+            <p>Selamat datang, {{ session['username'] }}</p>
+        </main>
+    </div>
+</div>
+{% endblock %}
