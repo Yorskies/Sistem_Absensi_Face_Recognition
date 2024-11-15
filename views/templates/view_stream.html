@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Live Stream dari ESP32</h1>
+<img id="esp32-stream" width="640" height="480" alt="Live Stream dari ESP32">
+
+<script type="text/javascript">
+    // Mengatur URL stream ESP32
+    const streamUrl = "http://192.168.1.35";  // URL langsung ke ESP32
+    const imgElement = document.getElementById("esp32-stream");
+
+    // Memperbarui gambar setiap detik
+    setInterval(() => {
+        imgElement.src = streamUrl + "?t=" + new Date().getTime(); // Menambahkan timestamp untuk mencegah caching
+    }, 1000);  // Ubah waktu refresh sesuai kebutuhan (1000 ms = 1 detik)
+</script>
+{% endblock %}

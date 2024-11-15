@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Live Stream dari Webcam dengan Deteksi Wajah</h1>
+<img id="video-stream" width="640" height="480" alt="Video Stream dari Webcam dengan Deteksi Wajah">
+
+<script type="text/javascript">
+    function updateStream() {
+        const img = document.getElementById('video-stream');
+        // Set the src to the /video_feed endpoint with a timestamp to prevent caching
+        img.src = "/video_feed?" + new Date().getTime();
+    }
+
+    // Update the frame every 100 milliseconds
+    setInterval(updateStream, 100);
+</script>
+{% endblock %}
