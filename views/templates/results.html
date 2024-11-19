@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1>Hasil Ekstraksi dan Augmentasi Wajah</h1>
+<div class="image-grid">
+    {% for image in images %}
+    <div class="image-item">
+        <img src="{{ image }}" alt="Extracted Face" style="width:160px; height:160px;">
+    </div>
+    {% endfor %}
+</div>
+
+<style>
+.image-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.image-item {
+    border: 1px solid #ddd;
+    padding: 5px;
+}
+</style>
+{% endblock %}

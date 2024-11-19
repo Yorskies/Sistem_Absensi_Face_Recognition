@@ -1,18 +1,27 @@
 import threading
 from flask import Flask, session, redirect, url_for, render_template, flash, request, Response
 from config import Config
+import os
+import warnings
 from controllers.user_controller import login, logout
 from controllers.student_controller import delete_student_by_id, get_all_students, add_student, get_student_by_id, update_student
 from controllers.attendance_controller import record_attendance, get_attendance
 from controllers.stream_controller import stream_bp
 import mysql.connector
+import atexit
 from controllers.yolo_controller import YOLOController
+
+# Tambahkan ini untuk mencegah masalah GUI di macOS
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+# Filter peringatan semaphore
+warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
 
 app = Flask(__name__, template_folder='views/templates')
 app.config.from_object(Config)
 
-# Inisialisasi YOLOController dengan URL stream ESP32
-yolo = YOLOController(weights='yolov8n_100e.pt', stream_url=0)  # Menggunakan `0` untuk webcam laptop
+# Inisialisasi YOLOController dengan URL stream ESP32 (tanpa nama dan NIS untuk awal)
+yolo = None  # Akan diinisialisasi ulang saat `start_video` dipanggil
 
 def get_db_connection():
     """Create a new database connection for each request."""
@@ -72,7 +81,6 @@ def add_student_view():
     
     return render_template('add_student.html')
 
-
 @app.route('/students/edit/<int:student_id>', methods=['GET', 'POST'])
 def edit_student_view(student_id):
     with get_db_connection() as mysql:
@@ -95,6 +103,8 @@ def delete_student(student_id):
 @app.route('/frame')
 def get_frame():
     """Send single frame for AJAX request."""
+    if not yolo:
+        return Response(status=404)
     frame = yolo.generate_frame(name=session.get('student_name'), nis=session.get('student_nis'))
     if frame is None:
         return Response(status=404)
@@ -108,24 +118,45 @@ def video_stream():
 @app.route('/start_video/<name>/<nis>')
 def start_video(name, nis):
     """Start video streaming with face detection."""
+    global yolo  # Menggunakan variabel global untuk menginisialisasi ulang YOLOController
     session['student_name'] = name
     session['student_nis'] = nis
+
+    # Inisialisasi ulang YOLOController dengan name dan nis
+    yolo = YOLOController(weights='yolov8n_100e.pt', stream_url=0, name=name, nis=nis)
     return redirect(url_for('video_stream'))
 
 @app.route('/video_feed')
 def video_feed():
     """Streaming video dengan deteksi wajah dan bounding box."""
+    global yolo
     # Pastikan nama dan NIS tersedia di session
     name = session.get('student_name')
     nis = session.get('student_nis')
-    
+
     # Jika session tidak memiliki nama dan NIS, kirim 404
-    if not name or not nis:
+    if not name or not nis or not yolo:
         return Response(status=404)
 
     # Menghasilkan stream video menggunakan YOLOController
     return Response(yolo.generate_frame(name=name, nis=nis), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/results')
+def show_results():
+    """Display the extracted face images."""
+    output_dir = "output_faces"
+    # Ambil semua file hasil ekstraksi dari folder
+    images = [f"/{output_dir}/{f}" for f in os.listdir(output_dir) if f.endswith(".jpg")]
+    # Render template dengan daftar file
+    return render_template('results.html', images=images)
+
+@atexit.register
+def cleanup():
+    """Release resources at exit."""
+    global yolo
+    if yolo and hasattr(yolo, 'release') and callable(yolo.release):
+        yolo.release()
+        print("Camera resources released.")
 
 if __name__ == '__main__':
     app.secret_key = Config.SECRET_KEY

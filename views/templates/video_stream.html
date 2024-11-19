@@ -5,13 +5,27 @@
 <img id="video-stream" width="640" height="480" alt="Video Stream dari Webcam dengan Deteksi Wajah">
 
 <script type="text/javascript">
+    let streaming = true;  // Flag untuk menentukan apakah stream aktif
+
     function updateStream() {
+        if (!streaming) return;  // Jika stream dihentikan, keluar dari fungsi
         const img = document.getElementById('video-stream');
         // Set the src to the /video_feed endpoint with a timestamp to prevent caching
         img.src = "/video_feed?" + new Date().getTime();
     }
 
     // Update the frame every 100 milliseconds
-    setInterval(updateStream, 100);
+    const interval = setInterval(updateStream, 100);
+
+    // Fungsi untuk menghentikan streaming dan redirect ke halaman hasil
+    function stopStream() {
+        streaming = false;
+        clearInterval(interval);  // Hentikan interval update stream
+        window.location.href = "/results";  // Redirect ke halaman hasil
+    }
+
+    // Simulasi penghentian stream
+    setTimeout(stopStream, 30000);  // Misalnya, berhenti setelah 30 detik (atau setelah server selesai)
 </script>
+
 {% endblock %}

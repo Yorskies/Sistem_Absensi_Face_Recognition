@@ -12,12 +12,16 @@ import time
 import dlib
 
 class YOLOController(BaseController):
-    def __init__(self, weights, stream_url, output_dir="output_faces", shape_predictor_path="datasets/shape_predictor_68_face_landmarks.dat"):
+    def __init__(self, weights, stream_url, output_dir="output_faces", 
+                 shape_predictor_path="datasets/shape_predictor_68_face_landmarks.dat", 
+                 name=None, nis=None):
         super().__init__()
         self.weights = weights
         self.stream_url = stream_url
         self.output_dir = output_dir
         self.shape_predictor_path = shape_predictor_path
+        self.name = name  # Tambahkan variabel name
+        self.nis = nis  # Tambahkan variabel nis
         self.model = self.get_model()
         self.cap = cv2.VideoCapture(self.stream_url)
         self.latest_frame = None
@@ -39,9 +43,10 @@ class YOLOController(BaseController):
         self.countdown_started = False
 
         # Start thread to continuously run YOLO detection
-        self.thread = threading.Thread(target=self.update_frame)
-        self.thread.daemon = True
-        self.thread.start()
+        if self.name and self.nis:
+            self.thread = threading.Thread(target=self.update_frame, args=(self.name, self.nis))
+            self.thread.daemon = True
+            self.thread.start()
 
     def get_model(self):
         try:
@@ -54,32 +59,70 @@ class YOLOController(BaseController):
             self.handle_error(f"Error loading model: {e}")
 
     def extract_and_augment_faces(self, frame, box, name, nis, confidence, smile_detected=False):
-        """Extract and augment face from bounding box without adding annotations to saved images."""
-        augmentations = transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
-            transforms.Resize((160, 160))
-        ])
+        """Extract, augment, and save faces with multiple augmentations."""
+        # Tentukan direktori output berdasarkan name dan nis
+        person_folder = os.path.join(self.output_dir, f"{name}_{nis}")
+        os.makedirs(person_folder, exist_ok=True)  # Buat folder jika belum ada
 
+        # Crop wajah berdasarkan bounding box
         x1, y1, x2, y2 = map(int, box)
         face = frame[y1:y2, x1:x2]
-
         face_pil = Image.fromarray(cv2.cvtColor(face, cv2.COLOR_BGR2RGB))
 
-        if smile_detected:
-            filename = f"{name}_{nis}_smile.jpg"
-            face_filename = os.path.join(self.output_dir, filename)
-            face_pil.save(face_filename)
-        else:
-            for i in range(3):
-                face_aug = augmentations(face_pil)
-                face_aug = np.array(face_aug)
-                face_aug = cv2.cvtColor(face_aug, cv2.COLOR_RGB2BGR)
+        # Resize ke 160x160
+        face_pil = face_pil.resize((160, 160))
 
-                filename = f"{name}_{nis}_non_smile_aug_{i}.jpg"
-                face_filename = os.path.join(self.output_dir, filename)
-                cv2.imwrite(face_filename, face_aug)
+        # Simpan gambar smile atau augmentasi
+        if smile_detected:
+            smile_filename = os.path.join(person_folder, "smile.jpg")
+            face_pil.save(smile_filename)
+            print(f"Saved smile image to: {smile_filename}")
+        else:
+            # Daftar augmentasi
+            augmentations = [
+                transforms.RandomHorizontalFlip(),  # Horizontal flip
+                transforms.RandomRotation(15),  # Rotation
+                transforms.ColorJitter(brightness=0.2, contrast=0.2),  # Brightness and contrast
+                transforms.RandomResizedCrop((160, 160), scale=(0.8, 1.0)),  # Resized crop
+                transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 2))  # Gaussian Blur
+            ]
+
+            for i, aug in enumerate(augmentations):
+                # Terapkan augmentasi satu per satu
+                augmented_face = aug(face_pil)
+                augment_filename = os.path.join(person_folder, f"aug{i+1}.jpg")
+                augmented_face.save(augment_filename)
+                print(f"Saved augmented image to: {augment_filename}")
+
+            # Tambahkan augmentasi dengan noise dan affine transform
+            noisy_face = self.add_noise(np.array(face_pil))  # Tambahkan noise
+            noisy_filename = os.path.join(person_folder, f"noisy.jpg")
+            Image.fromarray((noisy_face * 255).astype(np.uint8)).save(noisy_filename)
+            print(f"Saved noisy image to: {noisy_filename}")
+
+            affine_face = self.affine_transform(face_pil)  # Tambahkan affine transform
+            affine_filename = os.path.join(person_folder, f"affine.jpg")
+            affine_face.save(affine_filename)
+            print(f"Saved affine transformed image to: {affine_filename}")
+
+    # Fungsi tambahan untuk augmentasi noise
+    def add_noise(self, image):
+        """Add random Gaussian noise to the image."""
+        noise = np.random.normal(0, 0.05, image.shape)  # Gaussian noise
+        noisy_image = np.clip(image / 255.0 + noise, 0, 1)  # Normalize and add noise
+        return noisy_image
+
+    # Fungsi tambahan untuk affine transform
+    def affine_transform(self, image_pil):
+        """Apply affine transformation to the image."""
+        width, height = image_pil.size
+        affine_params = (1, 0.2, -20, 0.1, 1, 15)  # Parameters for affine transform
+        affine_image = image_pil.transform(
+            (width, height), Image.AFFINE, affine_params, resample=Image.BICUBIC
+        )
+        return affine_image
+
+
 
     def draw_landmarks(self, frame, landmarks):
         """Draw facial landmarks on the frame."""
@@ -100,20 +143,20 @@ class YOLOController(BaseController):
 
         return mouth_height > 0 and (mouth_width / mouth_height) > 0.32
 
-    def update_frame(self):
+    def update_frame(self, name, nis):
         frame_counter = 0
         while True:
             success, frame = self.cap.read()
             if not success:
                 print("Failed to capture frame from camera")
-                continue
+                break  # Hentikan loop jika kamera gagal membaca frame
 
-            # Resize frame for faster processing in live stream
+            # Resize frame for faster processing
             frame = cv2.resize(frame, (640, 480))
-            frame_with_annotations = frame.copy()  # Copy frame for annotations
+            frame_with_annotations = frame.copy()
 
             frame_counter += 1
-            if frame_counter % 1 != 0:
+            if frame_counter % 1 != 0:  # Skip frames (adjust for performance)
                 ret, buffer = cv2.imencode('.jpg', frame)
                 if ret:
                     with self.lock:
@@ -132,48 +175,48 @@ class YOLOController(BaseController):
                     landmarks = self.shape_predictor(frame, dlib_rect)
                     smile_detected = self.is_smiling(landmarks)
 
-                    # Save highest confidence frames without annotations
                     if not self.capture_smile:
                         if confidence > self.highest_confidence_non_smile[0]:
                             self.highest_confidence_non_smile = (confidence, frame.copy(), result.xyxy[0])
                         self.non_smile_count += 1
-                        if self.non_smile_count >= 50:
+                        if self.non_smile_count >= 50:  # Threshold to start capturing smiles
                             self.capture_smile = True
-                            self.countdown_started = True  # Start the countdown
+                            self.countdown_started = True
 
                     elif smile_detected:
                         if confidence > self.highest_confidence_smile[0]:
                             self.highest_confidence_smile = (confidence, frame.copy(), result.xyxy[0])
                         self.smile_count += 1
-                        if self.smile_count >= 50:
-                            # Save the highest confidence frames without annotations
+                        if self.smile_count >= 50:  # Threshold to stop capturing smiles
+                            # Perform face extraction and augmentation
                             if self.highest_confidence_non_smile[1] is not None:
                                 self.extract_and_augment_faces(
                                     self.highest_confidence_non_smile[1],
                                     self.highest_confidence_non_smile[2],
-                                    "name", "nis", self.highest_confidence_non_smile[0],
+                                    name, nis, self.highest_confidence_non_smile[0],
                                     smile_detected=False
                                 )
                             if self.highest_confidence_smile[1] is not None:
                                 self.extract_and_augment_faces(
                                     self.highest_confidence_smile[1],
                                     self.highest_confidence_smile[2],
-                                    "name", "nis", self.highest_confidence_smile[0],
+                                    name, nis, self.highest_confidence_smile[0],
                                     smile_detected=True
                                 )
-                            return  # Stop processing after saving frames
+                            self.release()  # Matikan kamera setelah proses selesai
+                            print("Extraction and augmentation completed. Stopping frame updates.")
+                            return  # Hentikan proses loop setelah selesai
 
-                    # Draw bounding box and landmarks only for live stream view
+                    # Tambahkan anotasi ke frame
                     cv2.rectangle(frame_with_annotations, (x1, y1), (x2, y2), (0, 255, 0) if not smile_detected else (255, 255, 0), 2)
                     label = f"Confidence: {confidence:.2f}"
                     cv2.putText(frame_with_annotations, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                     self.draw_landmarks(frame_with_annotations, landmarks)
 
-            # Display instructions for smiling
+            # Countdown untuk meminta senyum
             if self.capture_smile and not self.countdown_started:
                 cv2.putText(frame_with_annotations, "Silahkan Senyum...", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
-            # Countdown for smiling
             if self.countdown_started:
                 for i in range(3, 0, -1):
                     cv2.putText(frame_with_annotations, f"Senyum dalam {i}...", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
@@ -181,27 +224,34 @@ class YOLOController(BaseController):
                     if ret:
                         with self.lock:
                             self.latest_frame = buffer.tobytes()
-                    time.sleep(1)
+                    time.sleep(1)  # Delay untuk countdown
                 self.countdown_started = False
                 self.smile_count = 0
 
-            # Encode the frame with annotations for live streaming
+            # Encode frame terbaru untuk live streaming
             ret, buffer = cv2.imencode('.jpg', frame_with_annotations)
             if ret:
                 with self.lock:
                     self.latest_frame = buffer.tobytes()
 
-            time.sleep(0.02)
+            time.sleep(0.02)  # Delay untuk menjaga frame rate stabil
+
+
 
     def generate_frame(self, name, nis):
         while True:
-            with self.lock:
-                frame = self.latest_frame
-            if frame:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-            else:
-                time.sleep(0.05)
+            # Pastikan frame terbaru tersedia sebelum mengirim
+            if self.latest_frame is None:
+                time.sleep(0.05)  # Tunggu sejenak jika belum ada frame
+                continue
+
+            # Kirim frame terbaru dalam format streaming MJPEG
+            yield (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + self.latest_frame + b'\r\n')
+
 
     def release(self):
-        self.cap.release()
+        """Release the camera and cleanup resources."""
+        if self.cap.isOpened():
+            self.cap.release()
+            print("Camera released successfully.")
