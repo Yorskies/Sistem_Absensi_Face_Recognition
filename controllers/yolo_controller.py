@@ -5,6 +5,7 @@ import os
 from ultralytics import YOLO
 from flask import Response
 from controllers.base_controller import BaseController
+from controllers.facenet_controller import FaceNetController 
 from torchvision import transforms
 from PIL import Image
 import threading
@@ -104,6 +105,12 @@ class YOLOController(BaseController):
             affine_filename = os.path.join(person_folder, f"affine.jpg")
             affine_face.save(affine_filename)
             print(f"Saved affine transformed image to: {affine_filename}")
+
+        # Setelah augmentasi selesai, panggil FaceNetController untuk membuat embedding
+        print(f"Starting FaceNet embedding creation for {name}_{nis}...")
+        facenet_controller = FaceNetController(dataset_dir=self.output_dir)
+        facenet_controller.create_embeddings()
+        print(f"Embedding creation for {name}_{nis} completed.")
 
     # Fungsi tambahan untuk augmentasi noise
     def add_noise(self, image):
