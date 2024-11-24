@@ -20,11 +20,26 @@ class FaceNetController:
         os.makedirs(self.embedding_dir, exist_ok=True)
 
     def load_model(self):
-        """Load FaceNet model."""
-        model_path = "models/20180402-114759-vggface2.pt"  # Path ke model yang diunduh
-        model = InceptionResnetV1(pretrained=None).eval()  # Tidak unduh otomatis
-        model.load_state_dict(torch.load(model_path, map_location=self.device))
+        """Memuat model FaceNet."""
+        model_path = "models/20180402-114759-vggface2.pt"  # Path ke file model yang diunduh
+        model = InceptionResnetV1(pretrained=None, classify=False).eval()  # Inisialisasi model tanpa pre-trained
+        
+        try:
+            # Memuat state_dict dari file pre-trained
+            state_dict = torch.load(model_path, map_location=self.device)
+            
+            # Filter key yang sesuai dengan struktur model
+            filtered_state_dict = {k: v for k, v in state_dict.items() if k in model.state_dict()}
+            
+            # Memuat state_dict yang telah difilter
+            model.load_state_dict(filtered_state_dict, strict=False)
+            
+            print("Model berhasil dimuat dengan state_dict yang sudah difilter.")
+        except Exception as e:
+            print(f"Terjadi kesalahan saat memuat model: {e}")
+        
         return model
+
 
     def preprocess_image(self, img_path):
         """Preprocess image for FaceNet."""
@@ -47,11 +62,9 @@ class FaceNetController:
         labels = []
 
         # Load embeddings dan labels lama jika tersedia
-        embeddings_file = os.path.join(self.embedding_dir, "embeddings.npy")
-        labels_file = os.path.join(self.embedding_dir, "labels.npy")
-        if os.path.exists(embeddings_file) and os.path.exists(labels_file):
-            old_embeddings = np.load(embeddings_file)
-            old_labels = np.load(labels_file)
+        if os.path.exists(os.path.join(self.embedding_dir, "embeddings.npy")):
+            old_embeddings = np.load(os.path.join(self.embedding_dir, "embeddings.npy"))
+            old_labels = np.load(os.path.join(self.embedding_dir, "labels.npy"))
             embeddings.extend(old_embeddings)
             labels.extend(old_labels)
 
@@ -61,6 +74,9 @@ class FaceNetController:
             label_encoder = joblib.load(label_encoder_path)
         else:
             label_encoder = LabelEncoder()
+            # Jika label encoder belum di-fit, inisialisasi dengan label lama
+            if labels:
+                label_encoder.fit(labels)
 
         # Proses dataset untuk menemukan gambar baru
         for person_folder in os.listdir(self.dataset_dir):
@@ -68,13 +84,17 @@ class FaceNetController:
             if not os.path.isdir(person_path):
                 continue  # Lewati jika bukan folder
 
-            # Encode label identitas
+            # Pastikan properti `classes_` ada di LabelEncoder
+            if not hasattr(label_encoder, 'classes_'):
+                label_encoder.classes_ = np.array([])
+
+            # Tambahkan label baru jika belum ada
             if person_folder not in label_encoder.classes_:
                 label_encoder.classes_ = np.append(label_encoder.classes_, person_folder)
 
             for img_file in os.listdir(person_path):
                 img_path = os.path.join(person_path, img_file)
-                embedding_file = os.path.join(self.embedding_dir, f"{person_folder}_{img_file}.npy")
+                embedding_file = os.path.join(self.embedding_dir, f"{img_file}.npy")
 
                 # Periksa apakah embedding untuk gambar ini sudah ada
                 if os.path.exists(embedding_file):
@@ -94,6 +114,7 @@ class FaceNetController:
 
         # Simpan embeddings, labels, dan label encoder
         self.save_embeddings(embeddings, labels, label_encoder)
+
 
     def save_embeddings(self, embeddings, labels, label_encoder):
         """Save embeddings, labels, and label encoder to disk."""
